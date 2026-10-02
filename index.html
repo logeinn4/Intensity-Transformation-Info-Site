@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intensity Transformations Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=STIX+Two+Text:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8" />
+        <path d="M6 26 C 12 26, 14 6, 26 6" />
+      </svg>
+      <div>
+        <h1>Intensity Transformations Lab</h1>
+        <p>Digital Image Processing · point operations <span class="mono">s = T(r)</span></p>
+      </div>
+    </div>
+    <button id="themeBtn" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+    </button>
+  </header>
+
+  <main class="layout">
+    <!-- ============ Controls ============ -->
+    <aside class="controls">
+      <fieldset id="controlsFs">
+        <section class="card">
+          <h2><span class="num">1</span>Upload image</h2>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept="image/*" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            <span class="dz-title">Drop an image here or <u>browse</u></span>
+            <span class="dz-sub">PNG, JPG, BMP, GIF, WebP</span>
+          </label>
+          <button id="sampleBtn" class="link-btn" type="button">…or use a built-in sample image</button>
+          <div id="fileInfo" class="file-info" hidden></div>
+        </section>
+
+        <section class="card">
+          <h2><span class="num">2</span>Choose transformation</h2>
+
+          <div class="field-label">Color mode</div>
+          <div class="segmented" id="modeSeg">
+            <button type="button" data-mode="gray" aria-pressed="true">Grayscale</button>
+            <button type="button" data-mode="rgb" aria-pressed="false">RGB (per channel)</button>
+          </div>
+
+          <div id="transformList" class="transform-list"></div>
+
+          <div class="field-label">Parameters</div>
+          <div id="paramsBox" class="params"></div>
+
+          <label class="check">
+            <input type="checkbox" id="animateChk" checked>
+            Animate processing step by step
+          </label>
+
+          <button id="okBtn" class="primary" type="button" disabled>OK — Apply transformation</button>
+          <p class="hint center" id="okHint">Upload an image first.</p>
+        </section>
+      </fieldset>
+    </aside>
+
+    <!-- ============ Workspace ============ -->
+    <section class="workspace">
+      <div class="card">
+        <div class="card-head">
+          <h2><span class="num">3</span>Result <span id="resultTag" class="tag" hidden></span></h2>
+          <button id="downloadBtn" class="ghost-btn" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16"/></svg>
+            Download PNG
+          </button>
+        </div>
+        <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
+        <div class="img-pair">
+          <figure>
+            <figcaption id="inCaption">Input</figcaption>
+            <div class="canvas-wrap is-empty" id="inWrap">
+              <div class="canvas-box"><canvas id="inCanvas"></canvas></div>
+              <div class="empty-msg">No image loaded</div>
+            </div>
+          </figure>
+          <figure>
+            <figcaption id="outCaption">Output</figcaption>
+            <div class="canvas-wrap is-empty" id="outWrap">
+              <div class="canvas-box">
+                <canvas id="outCanvas"></canvas>
+                <div class="scanline" id="scanline"></div>
+              </div>
+              <div class="empty-msg">Press <b>OK</b> to produce the output</div>
+            </div>
+          </figure>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2><span class="num">4</span>How it works <span id="explainTitle" class="muted"></span></h2>
+        </div>
+
+        <div class="explain-grid">
+          <div class="col">
+            <div class="panel">
+              <div class="label">Transformation function</div>
+              <div id="formula" class="formula"></div>
+              <div id="formulaWhere" class="where"></div>
+              <p id="description" class="desc"></p>
+            </div>
+
+            <div class="panel">
+              <div class="label">Algorithm</div>
+              <ol id="steps" class="steps"></ol>
+            </div>
+
+            <div class="panel code-panel">
+              <div class="label">Function used <span class="pill">JavaScript</span></div>
+              <pre><code id="code"></code></pre>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="panel">
+              <div class="label">Transfer curve <span class="mono">s = T(r)</span></div>
+              <svg id="curve" class="curve-svg" viewBox="0 0 300 300" role="img" aria-label="Transfer function plot"></svg>
+              <div class="legend">
+                <span><i class="lg lg-curve"></i>T(r)</span>
+                <span><i class="lg lg-ref"></i>identity s = r</span>
+                <span><i class="lg lg-dot"></i>current pixel</span>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="label">Live pixel mapping</div>
+              <div id="pixelFlow"></div>
+            </div>
+
+            <div class="panel">
+              <div class="label">Gray-level mapping samples</div>
+              <div id="swatches"></div>
+            </div>
+
+            <div class="panel">
+              <div class="label">Histograms</div>
+              <div class="hists">
+                <div><div class="hist-title">Input <span id="inMean" class="muted"></span></div><canvas id="histIn" class="hist"></canvas></div>
+                <div><div class="hist-title">Output <span id="outMean" class="muted"></span></div><canvas id="histOut" class="hist"></canvas></div>
+              </div>
+            </div>
+
+            <div class="panel" id="bitCard" hidden>
+              <div class="label">All 8 bit planes <span class="muted">(click one to apply it)</span></div>
+              <div id="bitGrid" class="bit-grid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">Images are processed entirely in your browser — nothing is uploaded to a server.</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
