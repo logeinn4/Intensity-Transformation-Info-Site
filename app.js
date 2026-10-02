@@ -27,6 +27,12 @@
   };
   const sortedRange = (p) => ({ A: Math.min(p.A, p.B), B: Math.max(p.A, p.B) });
 
+  // Bit-plane helpers
+  const maskOf = (planes) => planes.reduce((m, k) => m | (1 << k), 0);
+  const planesDesc = (planes) => [...planes].sort((a, b) => b - a);
+  const bin8 = (v) => v.toString(2).padStart(8, '0');
+  const BIT_PRESETS = [['MSB', [7]], ['7–4', [7, 6, 5, 4]], ['3–0', [3, 2, 1, 0]], ['All', [7, 6, 5, 4, 3, 2, 1, 0]]];
+
   // Image statistics used by the data-driven stretches. Before an image is
   // loaded, example values are used so the curve can still be previewed.
   const EXAMPLE_STATS = { min: 40, max: 210, hist: null, total: 0, example: true };
@@ -362,18 +368,34 @@
     },
 
     bitplane: {
-      name: 'Bit-plane slicing', tag: 'Piecewise-linear', fnName: 'bitPlane',
-      params: [{ id: 'bit', label: 'Bit plane k', min: 0, max: 7, step: 1, value: 7, hint: '7 = most significant bit (MSB), 0 = least significant bit (LSB).' }],
-      fn: (p) => (r) => ((r >> p.bit) & 1) * 255,
-      formula: () => `<i>s</i> = (<i>L</i> − 1) · ( ⌊ <i>r</i> / 2<sup><i>k</i></sup> ⌋ mod 2 )`,
-      where: (p) => `k = ${p.bit}${p.bit === 7 ? ' (MSB)' : p.bit === 0 ? ' (LSB)' : ''} &nbsp;·&nbsp; r = Σ b<sub>k</sub> · 2<sup>k</sup>`,
-      subst: (r, p) => `(${r} >> ${p.bit}) & 1 = ${(r >> p.bit) & 1} → ×255`,
-      desc: 'An 8-bit pixel is the sum of eight bit planes: r = Σ bₖ·2ᵏ. The high planes (7, 6, 5) hold most of the visually significant data; the low planes hold fine detail and noise. Used for image compression and for judging how many bits are really needed.',
+      name: 'Bit-plane slicing', tag: 'Piecewise-linear', fnName: 'bitPlanes',
+      params: [
+        { id: 'planes', type: 'bits', label: 'Bit planes to combine', value: [7], hint: 'Click planes to add or remove them (7 = MSB, 0 = LSB). One plane shows that plane alone.' },
+        { id: 'scale', type: 'check', label: 'Scale result to the full 0–255 range', value: true, hint: 'Off shows the raw sum Σ bₖ·2ᵏ, which is dark when only low planes are kept.' },
+      ],
+      fn: (p) => {
+        const M = maskOf(p.planes);
+        return (r) => (p.scale ? ((r & M) * 255) / M : r & M);
+      },
+      formula: (p) => (p.scale
+        ? `<i>s</i> = <span class="frac"><span>L − 1</span><span>M</span></span> · Σ<sub><i>k</i> ∈ <i>S</i></sub> <i>b<sub>k</sub></i> · 2<sup><i>k</i></sup>`
+        : `<i>s</i> = Σ<sub><i>k</i> ∈ <i>S</i></sub> <i>b<sub>k</sub></i> · 2<sup><i>k</i></sup> = <i>r</i> AND <i>M</i>`),
+      where: (p) => {
+        const M = maskOf(p.planes);
+        return `S = {${planesDesc(p.planes).join(', ')}} &nbsp;·&nbsp; M = Σ<sub>k∈S</sub> 2<sup>k</sup> = ${bin8(M)}₂ = ${M} &nbsp;·&nbsp; b<sub>k</sub> = ⌊r / 2<sup>k</sup>⌋ mod 2`;
+      },
+      subst: (r, p) => {
+        const M = maskOf(p.planes);
+        return p.scale ? `(${r} AND ${M}) · 255 / ${M} = ${r & M} · 255 / ${M}` : `${r} AND ${M}`;
+      },
+      desc: 'An 8-bit pixel is the sum of eight bit planes: r = Σ bₖ·2ᵏ. Choose one plane to see it as a black-and-white image, or several planes (e.g. 3, 4 or 5, 6, 7) to rebuild the image from those planes only. The high planes (7, 6, 5) carry most of the visual information; the low planes mostly hold fine detail and noise. Rebuilding from planes 7–4 already looks close to the original, which is the idea behind bit-plane compression.',
       code: (p) =>
-`function bitPlane(r, k = ${p.bit}) {
-  // extract bit k (0 = LSB, 7 = MSB), scale to 0 or 255
-  const bit = (r >> k) & 1;
-  return bit * 255;
+`function bitPlanes(r, planes = [${planesDesc(p.planes).join(', ')}], scale = ${p.scale}) {
+  // mask with a 1 in every selected plane, e.g. [7, 6] -> 11000000b = 192
+  let mask = 0;
+  for (const k of planes) mask |= 1 << k;
+  const s = r & mask;                     // = sum of b_k * 2^k over the selected planes
+  return scale ? s * 255 / mask : s;      // optionally stretch to [0, 255]
 }`,
     },
   };
@@ -467,6 +489,18 @@
           <div class="param-head"><label for="p-${p.id}">${p.label}</label></div>
           <select id="p-${p.id}" data-id="${p.id}">${p.options.map(([val, lab]) => `<option value="${val}"${v[p.id] === val ? ' selected' : ''}>${lab}</option>`).join('')}</select>${hint}</div>`;
       }
+      if (p.type === 'bits') {
+        const sel = v[p.id];
+        return `<div class="param" data-id="${p.id}">
+          <div class="param-head"><label>${p.label}</label><output>S = {${planesDesc(sel).join(', ')}}</output></div>
+          <div class="bit-toggles" role="group" aria-label="${p.label}">${[7, 6, 5, 4, 3, 2, 1, 0].map((k) =>
+            `<button type="button" class="bit-toggle" data-bit="${k}" aria-pressed="${sel.includes(k)}"><b>${k}</b><span>${1 << k}</span></button>`).join('')}</div>
+          <div class="bit-presets">${BIT_PRESETS.map(([lab], i) => `<button type="button" class="chip-btn" data-preset="${i}">${lab}</button>`).join('')}</div>${hint}</div>`;
+      }
+      if (p.type === 'check') {
+        return `<div class="param" data-id="${p.id}">
+          <label class="check" style="margin:0"><input type="checkbox" id="p-${p.id}" data-check="${p.id}"${v[p.id] ? ' checked' : ''}> ${p.label}</label>${hint}</div>`;
+      }
       return `<div class="param" data-id="${p.id}">
         <div class="param-head"><label for="p-${p.id}">${p.label}</label><output id="o-${p.id}">${num(v[p.id])}</output></div>
         <input type="range" id="p-${p.id}" data-id="${p.id}" min="${p.min}" max="${p.max}" step="${p.step}" value="${v[p.id]}">${hint}</div>`;
@@ -489,8 +523,37 @@
         if (state.key === 'bitplane') markBitThumb();
       });
     });
+    el.params.querySelectorAll('[data-check]').forEach((box) => {
+      box.addEventListener('change', () => {
+        v[box.dataset.check] = box.checked;
+        updateExplanation();
+      });
+    });
+    el.params.querySelectorAll('[data-bit]').forEach((btn) => {
+      btn.addEventListener('click', () => toggleBitPlane(+btn.dataset.bit));
+    });
+    el.params.querySelectorAll('[data-preset]').forEach((btn) => {
+      btn.addEventListener('click', () => setBitPlanes(BIT_PRESETS[+btn.dataset.preset][1]));
+    });
     const auto = $('#autoStretch');
     if (auto) auto.addEventListener('click', autoStretch);
+  }
+
+  function setBitPlanes(planes) {
+    state.params.bitplane.planes = planesDesc(planes);
+    renderParams();
+    updateExplanation();
+    markBitThumb();
+  }
+
+  // Add or remove one plane; at least one plane always stays selected.
+  function toggleBitPlane(k) {
+    const cur = state.params.bitplane.planes;
+    if (cur.includes(k)) {
+      if (cur.length > 1) setBitPlanes(cur.filter((x) => x !== k));
+    } else {
+      setBitPlanes([...cur, k]);
+    }
   }
 
   function applyShowIf() {
@@ -552,7 +615,7 @@ for (let i = 0; i < px.length; i += 4) {
 
   function highlight(src) {
     return esc(src).replace(
-      /(\/\/[^\n]*)|('[^'\n]*')|\b(function|return|const|let|for|if|else|new)\b|\b(Math\.\w+|Uint8ClampedArray)|\b(\d+(?:\.\d+)?)\b/g,
+      /(\/\/[^\n]*)|('[^'\n]*')|\b(function|return|const|let|for|of|if|else|new|true|false)\b|\b(Math\.\w+|Uint8ClampedArray)|\b(\d+(?:\.\d+)?)\b/g,
       (m, com, str, kw, fn, n) =>
         com ? `<span class="tk-com">${com}</span>`
         : str ? `<span class="tk-str">${str}</span>`
@@ -668,15 +731,17 @@ for (let i = 0; i < px.length; i += 4) {
 
     if (state.key === 'bitplane') {
       const v = px.rin[0];
-      const k = p.bit;
-      const bit = (v >> k) & 1;
+      const planes = planesDesc(p.planes);
+      const M = maskOf(planes);
+      const kept = v & M;
+      const terms = planes.map((k) => `${(v >> k) & 1}·${1 << k}`).join(' + ');
       html += `<div class="bits">
-        <div class="bits-title">${gray ? 'r' : 'R'} = ${v} in binary — bit ${k} is selected</div>
+        <div class="bits-title">${gray ? 'r' : 'R'} = ${v} = ${bin8(v)}₂ — highlighted planes are kept</div>
         <div class="bits-row">${[7, 6, 5, 4, 3, 2, 1, 0].map((b) => {
           const on = (v >> b) & 1;
-          return `<div class="bit${on ? ' one' : ''}${b === k ? ' sel' : ''}"><span class="b-val">${on}</span><span class="b-idx">b${b}</span></div>`;
+          return `<div class="bit${on ? ' one' : ''}${planes.includes(b) ? ' sel' : ''}"><span class="b-val">${on}</span><span class="b-idx">b${b}</span></div>`;
         }).join('')}</div>
-        <div class="hint">b${k} = ${bit} &nbsp;⇒&nbsp; s = ${bit} × 255 = ${bit * 255}</div>
+        <div class="hint">Σ b<sub>k</sub>·2<sup>k</sup> = ${terms} = ${kept}${p.scale ? ` &nbsp;⇒&nbsp; s = ${kept} · 255 / ${M} = ${Math.round((kept * 255) / M)}` : ` &nbsp;⇒&nbsp; s = ${kept}`}</div>
       </div>`;
     }
     el.flow.innerHTML = html;
@@ -810,21 +875,20 @@ for (let i = 0; i < px.length; i += 4) {
       const lab = document.createElement('span');
       lab.textContent = `Bit ${k}${k === 7 ? ' · MSB' : k === 0 ? ' · LSB' : ''}`;
       btn.append(cv, lab);
+      btn.setAttribute('aria-pressed', 'false');
       btn.addEventListener('click', () => {
-        if (state.running) return;
-        state.params.bitplane.bit = k;
-        renderParams();
-        updateExplanation();
-        markBitThumb();
-        run();
+        if (!state.running) toggleBitPlane(k);
       });
       el.bitGrid.append(btn);
     }
     markBitThumb();
   }
   function markBitThumb() {
-    el.bitGrid.querySelectorAll('.bit-thumb').forEach((b) =>
-      b.classList.toggle('sel', +b.dataset.k === state.params.bitplane.bit));
+    el.bitGrid.querySelectorAll('.bit-thumb').forEach((b) => {
+      const on = state.params.bitplane.planes.includes(+b.dataset.k);
+      b.classList.toggle('sel', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
   }
 
   /* ================= Image loading ================= */
